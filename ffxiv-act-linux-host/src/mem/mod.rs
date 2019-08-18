@@ -10,8 +10,6 @@ use std::ops::Range;
 /// memory synchronization to the client.
 pub fn begin() {
 
-
-
     let (sender, host_handle) = host_server::run_server();
     let reader_handle = reader::run_reader(sender);
 

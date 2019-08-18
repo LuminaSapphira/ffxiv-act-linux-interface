@@ -5,6 +5,9 @@ pub struct AllMemory {
     pub target: Target,
     pub chat_log: ChatLog,
     pub mob_array: MobArray,
+    pub party_list: PartyList,
+    pub server_time: ServerTime,
+    pub player: Player,
 }
 
 #[repr(C, packed)]
@@ -64,11 +67,107 @@ pub struct ChatLogHeader {
 
 #[repr(C, packed)]
 pub struct MobArray {
-    pub signature: [u8; 20],
-    pub offset: [u8; 4],
+    signature: [u8; 20],
+    offset: [u8; 4],
     // TODO
     // Array of 421 pointers to heap-allocated mobs
     pub data: [usize; 421],
+}
+
+#[repr(C, packed)]
+pub struct PartyList {
+    signature: [u8; 21],
+    offset: [u8; 4],
+    data: [u8; 25600],
+}
+
+#[repr(C, packed)]
+pub struct ServerTime {
+    signature: [u8; 9],
+    offset: [u8; 4],
+    pub ptr: u64,
+}
+
+#[repr(C, packed)]
+pub struct ServerTimePart1 {
+    _padding: [u8; 72],
+    pub ptr2: u64
+}
+
+#[repr(C, packed)]
+pub struct ServerTimePart2 {
+    _padding: [u8; 8],
+    pub ptr3: u64
+}
+
+#[repr(C, packed)]
+pub struct ServerTimePart3 {
+    _padding: [u8; 2116],
+    pub data: u64
+}
+
+#[repr(C, packed)]
+pub struct Player {
+    signature: [u8; 14],
+    offset: [u8; 4],
+}
+pub static SERVER_3: ServerTimePart3 = ServerTimePart3::create();
+pub static mut SERVER_2: ServerTimePart2 = ServerTimePart2::create();
+pub static mut SERVER_1: ServerTimePart1 = ServerTimePart1::create();
+
+impl PartyList {
+    pub const fn create() -> PartyList {
+        PartyList {
+            signature: [0x48,0x8D,0x7C,0x24,0x20,0x66,0x66,0x0F,0x1F,0x84,0x00,0x00,0x00,0x00,0x00,0x48,0x8B,0x17,0x48,0x8D,0x0D],
+            offset: [0; 4],
+            data: [0; 25600]
+        }
+    }
+}
+
+impl ServerTimePart1 {
+    pub const fn create() -> ServerTimePart1 {
+        ServerTimePart1 {
+            _padding: [0; 72],
+            ptr2: 0
+        }
+    }
+}
+
+impl ServerTimePart2 {
+    pub const fn create() -> ServerTimePart2 {
+        ServerTimePart2 {
+            _padding: [0; 8],
+            ptr3: 0
+        }
+    }
+}
+impl ServerTimePart3 {
+    pub const fn create() -> ServerTimePart3 {
+        ServerTimePart3 {
+            _padding: [0; 2116],
+            data: 0
+        }
+    }
+}
+
+impl ServerTime {
+    pub const fn create() -> ServerTime {
+        ServerTime {
+            signature: [0x0f,0xb7,0xc0,0x89,0x47,0x10,0x48,0x8b,0x0d,],
+            offset: [0; 4],
+            ptr: 0
+        }
+    }
+}
+
+impl Player {
+    pub const fn create() -> Player {
+        Player {
+            signature: [0x83,0xf9,0xff,0x74,0x12,0x44,0x8b,0x04,0x8e,0x8b,0xd3,0x48,0x8d,0x0d],
+            offset: [0; 4]
+        }
+    }
 }
 
 impl AllMemory {
@@ -78,6 +177,9 @@ impl AllMemory {
             target: Target::create(),
             chat_log: ChatLog::create(),
             mob_array: MobArray::create(),
+            party_list: PartyList::create(),
+            server_time: ServerTime::create(),
+            player: Player::create(),
         }
     }
 }

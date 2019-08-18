@@ -49,8 +49,6 @@ pub fn run_reader(sender: Sender<SyncPacket>) -> JoinHandle<()> {
 
     let ffxiv = find_ffxiv();
 
-    println!("{:?}", sigs_to_scan[1].1);
-
     let signature_map = sigs_to_scan
         .into_iter()
         .map(|a| {

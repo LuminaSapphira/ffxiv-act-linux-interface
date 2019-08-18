@@ -1,13 +1,16 @@
 use std::time::Duration;
 
-use std::net::TcpStream;
+use std::net::{TcpStream, TcpListener};
 use std::fs::File;
 use std::io::prelude::*;
+use std::thread;
 
 use serde_json::from_reader;
 use serde::Deserialize;
 
 use byteorder::{ByteOrder, LittleEndian};
+
+use std::net::ToSocketAddrs;
 
 mod models;
 
@@ -47,11 +50,26 @@ static mut ALL_MEMORY: AllMemory = AllMemory::create();
 //const SERVERTIME_PTR_INDEX: usize = 134;
 //const PLAYER_PTR_INDEX: usize = 152;
 
+
+
 fn main() {
+    unsafe { setup_memory(); }
+
     let config: Config = {
         let mut file = File::open("config.json").expect("Unable to open config file");
         from_reader(&mut file).expect("Unable to read / parse config file")
     };
+    let addr2 = config.address.clone();
+    thread::spawn(move || {
+        let mut addr = addr2.to_socket_addrs().unwrap().next().unwrap();
+        addr.set_port(54992);
+        let mut tcp_ffxiv = TcpStream::connect(addr).unwrap();
+        let mut byte_buffer_ffxiv = [0u8; 32768];
+        loop {
+            let read = tcp_ffxiv.read(&mut byte_buffer_ffxiv).unwrap();
+            println!("read {} bytes", read);
+        }
+    });
     let mut tcpstream = TcpStream::connect(config.address).expect("Unable to connect to server");
     let mut byte_buffer = [0u8; 1];
     loop {
@@ -72,6 +90,7 @@ fn main() {
             Err(_) => break
         }
     }
+
     unsafe {
         println!("Memory sync bank ptr: {:p}", &ALL_MEMORY as *const AllMemory)
     }
@@ -81,6 +100,12 @@ fn main() {
 #[derive(Deserialize)]
 struct Config {
     pub address: String,
+}
+
+unsafe fn setup_memory() {
+    SERVER_2.ptr3 = (&SERVER_3) as *const ServerTimePart3 as u64;
+    SERVER_1.ptr2 = (&SERVER_2) as *const ServerTimePart2 as u64;
+    ALL_MEMORY.server_time.ptr = (&SERVER_1) as *const ServerTimePart1 as u64;
 }
 
 unsafe fn set_zone(zone: u32) {

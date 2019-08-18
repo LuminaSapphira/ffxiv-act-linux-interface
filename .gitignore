@@ -1,0 +1,5 @@
+/ffxiv-act-linux-client/target
+/ffxiv-act-linux-host/target
+**/*.rs.bk
+/ffxiv-act-linux-client/.idea
+/ffxiv-act-linux-host/.idea

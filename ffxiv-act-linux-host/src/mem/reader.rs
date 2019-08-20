@@ -11,12 +11,14 @@ use crate::read_process_memory::{Pid, TryIntoProcessHandle, ProcessHandle, CopyA
 use crate::utils;
 use crate::proc_maps::{get_process_maps, MapRange};
 use std::process::Command;
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, ByteOrder};
 use std::io::Cursor;
 use std::time::Duration;
 use crate::mem::packets::SyncPacket;
 
 use std::sync::mpsc::Sender;
+use serde::de::Unexpected::Signed;
+use crate::mem::models::Combatant;
 
 const SCAN_SIZE: usize = 65536;
 
@@ -64,16 +66,29 @@ pub fn run_reader(sender: Sender<SyncPacket>) -> JoinHandle<()> {
         let sigs = signature_map;
         let ffxiv = ffxiv;
         let sender = sender;
-        let mut cur_zone = 0u32;
         let base_addr = sigs.get(&SignatureType::ZoneID).unwrap();
+        let mut mob_updates = 0u64;
         loop {
 
             let zone = read_zone_id(*base_addr, &ffxiv);
-            if cur_zone != zone {
-                println!("Zone changed: {}", zone);
-                sender.send(SyncPacket::ZoneID(zone)).expect("Failed to send sync to host thread");
-                cur_zone = zone;
+            sender.send(SyncPacket::ZoneID(zone)).expect("Failed to send sync to host thread.");
+
+            if zone != 0 && mob_updates % 10 == 0 {
+                let mob_array_ptr = sigs.get(&SignatureType::MobArray).unwrap();
+//                println!("mob_sig: {:x?}", mob_ptr);
+                for i in 0..421usize {
+                    let mob_opt = read_mob(*mob_array_ptr, i, &ffxiv);
+                    if let Some((this_ptr, combatant)) = mob_opt {
+                        let com = combatant.binary_serialize_compressed();
+                        sender.send(SyncPacket::MobUpdate(i as u16, this_ptr as u64, com)).expect("Failed to send sync to host thread");
+                    } else {
+                        sender.send(SyncPacket::MobNull(i as u16)).expect("Failed to send sync to host thread");
+                    }
+                }
             }
+
+            mob_updates += 1;
+
             sleep(Duration::from_millis(10));
         }
     })
@@ -87,6 +102,20 @@ fn read_signature(signature: usize, ffxiv: &Pid) -> usize {
     offset as usize + signature + 4
 }
 
+fn read_mob(signature: usize, index: usize, ffxiv: &Pid) -> Option<(u64, Combatant)> {
+
+    let mob_array = read_signature(signature, ffxiv);
+    let mob_ptr_ptr = mob_array + 8 * index;
+    let mob_ptr_vec = read_process_memory::copy_address(mob_ptr_ptr, 8, &ffxiv as &Pid).unwrap();
+    let mob_ptr = LittleEndian::read_u64(mob_ptr_vec.as_slice()) as usize;
+    if mob_ptr != 0 {
+        let mob_data = read_process_memory::copy_address(mob_ptr, 11520, &ffxiv as &Pid).unwrap();
+        Some((mob_ptr as u64, Combatant::from_slice(mob_data.as_slice())))
+    } else {
+        None
+    }
+}
+
 fn read_zone_id(signature: usize, ffxiv: &Pid) -> u32 {
     let zone_id_addr= read_signature(signature, ffxiv);
     let zone_id = read_process_memory::copy_address(zone_id_addr, 4, &ffxiv as &Pid).unwrap();
@@ -95,16 +124,7 @@ fn read_zone_id(signature: usize, ffxiv: &Pid) -> u32 {
 }
 
 fn find_ffxiv() -> Pid {
-    let output = Command::new("pgrep")
-        .arg("ffxiv_dx11.exe")
-        .output()
-        .expect("Unable to start pgrep to find ffxiv.");
-    if !output.status.success() {
-        panic!("Unable to find ffxiv.");
-    }
-    let mut str_pid = String::from_utf8(output.stdout).expect("Unable to parse pgrep output");
-    str_pid.remove(str_pid.len() - 1);
-    let pid = str_pid.parse::<i32>().expect("Unable to parse pgrep output");
+    let pid = utils::find_ffxiv() as i32;
     pid as Pid
 }
 

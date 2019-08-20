@@ -71,7 +71,7 @@ pub struct MobArray {
     offset: [u8; 4],
     // TODO
     // Array of 421 pointers to heap-allocated mobs
-    pub data: [usize; 421],
+    pub data: [u64; 421],
 }
 
 #[repr(C, packed)]
@@ -111,6 +111,8 @@ pub struct Player {
     signature: [u8; 14],
     offset: [u8; 4],
 }
+
+
 pub static SERVER_3: ServerTimePart3 = ServerTimePart3::create();
 pub static mut SERVER_2: ServerTimePart2 = ServerTimePart2::create();
 pub static mut SERVER_1: ServerTimePart1 = ServerTimePart1::create();

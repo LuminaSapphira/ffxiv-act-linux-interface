@@ -1,6 +1,7 @@
 mod host_server;
 mod reader;
 mod packets;
+mod models;
 
 use crate::Deserialize;
 use crate::hex;

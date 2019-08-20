@@ -1,6 +1,6 @@
 
 use std::io::prelude::*;
-use std::net::TcpListener;
+use std::net::{TcpListener, UdpSocket};
 
 use std::thread;
 
@@ -10,23 +10,39 @@ use std::thread::JoinHandle;
 
 use std::sync::mpsc::{Sender, Receiver, channel};
 use crate::mem::packets::{SyncPacket, EncodePacket};
+use std::time::Duration;
 
 
 pub fn run_server() -> (Sender<SyncPacket>, JoinHandle<Result<(), ServerError>>) {
     let (tx, rx) = channel();
     (tx, thread::spawn(move || {
         let rx = rx;
-        let listener = TcpListener::bind("0.0.0.0:7262").map_err(|_| ServerError::Binding)?;
-        Ok::<(), ServerError>(()).and_then(|_| {
-            let (mut inc, _) = listener.accept().map_err(|a| ServerError::Connecting(a))?;
-            for sync in rx {
-                println!("Sending sync packet");
-                let buf = sync.encode_packet();
-                inc.write(&buf[..]);
+        let udp = UdpSocket::bind("0.0.0.0:7262").map_err(|_| ServerError::Binding)?;
+        udp.set_write_timeout(Some(Duration::from_secs(10))).unwrap();
+        let (_, client) = udp.recv_from(&mut [0u8;5]).unwrap();
+        println!("[MEM] Client connected from {}", client);
+        udp.connect(client).unwrap();
+        for sync in rx {
+            let buf = sync.encode_packet();
+            match udp.send(buf.as_slice()) {
+                Ok(_) => {
+                },
+                Err(_) => break,
             }
-            println!("ending");
-            Ok(())
-        })
+        }
+        Ok(())
+
+//        let listener = TcpListener::bind("0.0.0.0:7262").map_err(|_| ServerError::Binding)?;
+//        Ok::<(), ServerError>(()).and_then(|_| {
+//            let (mut inc, _) = listener.accept().map_err(|a| ServerError::Connecting(a))?;
+//            for sync in rx {
+//                println!("Sending sync packet");
+//                let buf = sync.encode_packet();
+//                inc.write(&buf[..]);
+//            }
+//            println!("ending");
+//            Ok(())
+//        })
     }))
 }
 

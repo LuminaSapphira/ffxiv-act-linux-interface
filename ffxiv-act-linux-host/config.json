@@ -1,6 +1,6 @@
 {
   "net_config": {
-    "interface": "eno1",
+    "interface": "enp8s0",
     "hostname_exclude": "kate-arch"
   }
 }

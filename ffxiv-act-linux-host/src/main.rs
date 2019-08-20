@@ -11,6 +11,9 @@ extern crate serde_json;
 extern crate hex;
 extern crate pcap;
 extern crate etherparse;
+extern crate bincode;
+extern crate flate2;
+
 
 use serde::{Deserialize};
 use serde_json::from_reader;

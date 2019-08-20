@@ -1,10 +1,9 @@
 use std::io::prelude::*;
-use std::net::{TcpStream, TcpListener};
+use std::net::{TcpListener};
 
 use std::sync::mpsc;
 
 use std::thread;
-use std::thread::JoinHandle;
 
 use crate::pcap;
 use pcap::Device;
@@ -54,9 +53,12 @@ fn start_incoming_sync_host() -> mpsc::Sender<Vec<u8>> {
         while let Some(_) = iter.next() {
 
         }
-        for data in rx {
-            println!("[FFXIV][DEBUG] Sending {} bytes.", data.len());
-            inc.write(&data[..]).expect("Unable to send packet");
+        'sync: for data in rx {
+//            println!("[FFXIV][DEBUG] Sending {} bytes.", data.len());
+            if let Err(_) = inc.write(&data[..]) {
+                println!("[FFXIV] Connecting ending.");
+                break 'sync;
+            }
         }
 
     });

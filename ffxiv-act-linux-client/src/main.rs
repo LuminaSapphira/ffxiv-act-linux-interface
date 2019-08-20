@@ -63,7 +63,6 @@ fn handle_zone_packet<R: Read>(tcp: &mut R) {
     let mut zone_buffer = [0u8; 4];
     tcp.read_exact(&mut zone_buffer).expect("malformed zone packet");
     let zone = LittleEndian::read_u32(&zone_buffer);
-    println!("new zone: {}", zone);
     unsafe { set_zone(zone); }
 }
 
@@ -109,6 +108,30 @@ fn handle_mob_packet<R: ReadBytesExt>(tcp: &mut R, mob_array_heap: &mut HashMap<
         }
         mob_array_heap.insert(index, (pointer, new_mob));
     }
+}
+
+fn handle_target_packet<R: ReadBytesExt>(data: &mut R, mob_array_heap: &mut HashMap<u16, (u64, Box<[u8; 11520]>)>) {
+
+    let host_target = data.read_u64::<LittleEndian>().unwrap();
+    let host_hover_target = data.read_u64::<LittleEndian>().unwrap();
+    let host_focus_target = data.read_u64::<LittleEndian>().unwrap();
+    let target = get_client_mob_pointer_from_host(host_target, mob_array_heap);
+    let hover_target = get_client_mob_pointer_from_host(host_hover_target, mob_array_heap);
+    let focus_target = get_client_mob_pointer_from_host(host_focus_target, mob_array_heap);
+    unsafe {
+        ALL_MEMORY.target.target_data.target = target;
+        ALL_MEMORY.target.target_data.hovertarget = hover_target;
+        ALL_MEMORY.target.target_data.focustarget = focus_target;
+    }
+
+}
+
+fn get_client_mob_pointer_from_host(host_pointer: u64, mob_array_heap: &mut HashMap<u16, (u64, Box<[u8; 11520]>)>) -> u64 {
+    if host_pointer != 0 {
+        let (_, mob) = mob_array_heap.values().find(|(ptr, _)| *ptr == host_pointer).unwrap();
+        let mob_ref = mob.as_ref();
+        (mob_ref as *const [u8; 11520]) as u64
+    } else { 0 }
 }
 
 enum ThreadControlMsg {
@@ -182,7 +205,7 @@ fn start_ffxiv_client(addr: String, thread_ctl: mpsc::Sender<ThreadControlMsg>) 
                 if read == 0 {
                     break;
                 }
-                println!("[FFXIV][DEBUG] Read {} bytes.", read);
+//                println!("[FFXIV][DEBUG] Read {} bytes.", read);
             }
             thread_ctl.send(ThreadControlMsg::Ending(ThreadType::FFXIV)).unwrap();
         } else {
@@ -209,7 +232,7 @@ fn start_mem_sync_client(addr: String, thread_ctl: mpsc::Sender<ThreadControlMsg
             }
         };
 
-        let udp_client = UdpSocket::bind("192.168.122.149:30005").unwrap();
+        let udp_client = UdpSocket::bind("0.0.0.0:0").unwrap();
         udp_client.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
         udp_client.connect(addr).unwrap();
         udp_client.send(&[0u8,0,0,0,0,0,0,0]).unwrap();
@@ -222,6 +245,7 @@ fn start_mem_sync_client(addr: String, thread_ctl: mpsc::Sender<ThreadControlMsg
                             0x01 => handle_zone_packet(&mut cursor),
                             0x02 => handle_mob_packet(&mut cursor, &mut mob_array_heap),
                             0x03 => handle_mob_null_packet(&mut cursor, &mut mob_array_heap),
+                            0x04 => handle_target_packet(&mut cursor, &mut mob_array_heap),
                             _ => panic!("Unknown packet type"),
                         }
                     } else {

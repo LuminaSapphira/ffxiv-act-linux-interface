@@ -255,6 +255,46 @@ impl Combatant {
 
 }
 
+pub struct Target {
+    pub target: u64,
+    pub hover_target: u64,
+    pub focus_target: u64,
+}
+
+impl Target {
+    #[allow(dead_code)]
+    pub fn from_ffxiv_slice<D: AsRef<[u8]>>(slice: D) -> Target {
+        let slice = slice.as_ref();
+        let mut cursor = Cursor::new(slice);
+        Ok::<(), Box<dyn std::error::Error>>(()).and_then(|_| {
+            cursor.set_position(192);
+            let target = cursor.read_u64::<LE>()?;
+            let hover_target = cursor.read_u64::<LE>()?;
+            cursor.set_position(280);
+            let focus_target = cursor.read_u64::<LE>()?;
+
+            Ok(Target { target, focus_target, hover_target })
+        }).expect("Couldn't read target.")
+
+    }
+
+    #[allow(dead_code)]
+    pub fn as_ffxiv_array(&self) -> [u8; 512] {
+        Ok::<(), Box<dyn std::error::Error>>(()).and_then(|_| {
+            let mut buffer = [0u8; 512];
+            let mut cursor = Cursor::new(buffer.as_mut());
+            cursor.set_position(192);
+            cursor.write_u64::<LE>(self.target)?;
+            cursor.write_u64::<LE>(self.hover_target)?;
+            cursor.set_position(280);
+            cursor.write_u64::<LE>(self.focus_target)?;
+            Ok(buffer)
+        }).expect("Couldn't write target")
+
+
+    }
+}
+
 #[cfg(test)]
 mod models_tests {
     use crate::internal_models::Combatant;
@@ -270,8 +310,5 @@ mod models_tests {
         g.finish().unwrap();
         assert_eq!(compress_vec.as_slice(), a.binary_serialize_compressed().as_slice());
     }
-
-//    #[test]
-
 
 }

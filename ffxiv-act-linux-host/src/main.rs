@@ -17,13 +17,7 @@ extern crate flate2;
 
 use serde::{Deserialize};
 use serde_json::from_reader;
-use std::io;
-use std::io::prelude::*;
 use std::fs::File;
-use byteorder::{LittleEndian, ReadBytesExt};
-use read_process_memory::{Pid, TryIntoProcessHandle, copy_address};
-
-use std::net::TcpListener;
 
 use std::thread;
 

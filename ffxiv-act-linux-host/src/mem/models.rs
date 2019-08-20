@@ -1,14 +1,52 @@
 use std::io::Read;
-use std::io::prelude::*;
 use std::io::Cursor;
 
-use byteorder::{ReadBytesExt, LittleEndian as LE};
+use byteorder::{ReadBytesExt, WriteBytesExt, LittleEndian as LE};
 
 use serde::Serialize;
 
 use bincode;
 
 use flate2::{GzBuilder, Compression};
+
+pub struct Target {
+    pub target: u64,
+    pub hover_target: u64,
+    pub focus_target: u64,
+}
+
+impl Target {
+    pub fn from_ffxiv_slice<D: AsRef<[u8]>>(slice: D) -> Target {
+        let slice = slice.as_ref();
+        let mut cursor = Cursor::new(slice);
+        Ok::<(), Box<dyn std::error::Error>>(()).and_then(|_| {
+            cursor.set_position(192);
+            let target = cursor.read_u64::<LE>()?;
+            let hover_target = cursor.read_u64::<LE>()?;
+            cursor.set_position(280);
+            let focus_target = cursor.read_u64::<LE>()?;
+
+            Ok(Target { target, focus_target, hover_target })
+        }).expect("Couldn't read target.")
+
+    }
+
+    #[allow(dead_code)]
+    pub fn as_ffxiv_array(&self) -> [u8; 512] {
+        Ok::<(), Box<dyn std::error::Error>>(()).and_then(|_| {
+            let mut buffer = [0u8; 512];
+            let mut cursor = Cursor::new(buffer.as_mut());
+            cursor.set_position(192);
+            cursor.write_u64::<LE>(self.target)?;
+            cursor.write_u64::<LE>(self.hover_target)?;
+            cursor.set_position(280);
+            cursor.write_u64::<LE>(self.focus_target)?;
+            Ok(buffer)
+        }).expect("Couldn't write target")
+
+
+    }
+}
 
 #[derive(Serialize)]
 pub struct Combatant {
@@ -171,7 +209,7 @@ impl Combatant {
 
     pub fn binary_serialize_compressed(&self) -> Vec<u8> {
         let mut ret = Vec::new();
-        let mut cursor = Cursor::new(&mut ret);
+        let cursor = Cursor::new(&mut ret);
 
         let mut gz = GzBuilder::new()
             .write(cursor, Compression::default());

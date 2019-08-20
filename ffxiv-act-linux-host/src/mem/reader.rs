@@ -1,5 +1,4 @@
 use std::fs::File;
-use std::io::prelude::*;
 
 use std::collections::HashMap;
 
@@ -9,16 +8,14 @@ use crate::mem::{Signatures, Signature};
 
 use crate::read_process_memory::{Pid, TryIntoProcessHandle, ProcessHandle, CopyAddress};
 use crate::utils;
-use crate::proc_maps::{get_process_maps, MapRange};
-use std::process::Command;
+use crate::proc_maps::{get_process_maps};
 use byteorder::{LittleEndian, ReadBytesExt, ByteOrder};
 use std::io::Cursor;
 use std::time::Duration;
 use crate::mem::packets::SyncPacket;
 
 use std::sync::mpsc::Sender;
-use serde::de::Unexpected::Signed;
-use crate::mem::models::Combatant;
+use crate::mem::models::{Combatant, Target};
 
 const SCAN_SIZE: usize = 65536;
 
@@ -67,27 +64,37 @@ pub fn run_reader(sender: Sender<SyncPacket>) -> JoinHandle<()> {
         let ffxiv = ffxiv;
         let sender = sender;
         let base_addr = sigs.get(&SignatureType::ZoneID).unwrap();
-        let mut mob_updates = 0u64;
-        loop {
-
+        'mem: loop {
+            // ZONE
             let zone = read_zone_id(*base_addr, &ffxiv);
-            sender.send(SyncPacket::ZoneID(zone)).expect("Failed to send sync to host thread.");
+            if let Err(_) = sender.send(SyncPacket::ZoneID(zone)) { break 'mem; }
 
-            if zone != 0 && mob_updates % 10 == 0 {
+
+            if zone != 0 {
+                // MOB ARRAY
+
                 let mob_array_ptr = sigs.get(&SignatureType::MobArray).unwrap();
-//                println!("mob_sig: {:x?}", mob_ptr);
                 for i in 0..421usize {
                     let mob_opt = read_mob(*mob_array_ptr, i, &ffxiv);
                     if let Some((this_ptr, combatant)) = mob_opt {
                         let com = combatant.binary_serialize_compressed();
-                        sender.send(SyncPacket::MobUpdate(i as u16, this_ptr as u64, com)).expect("Failed to send sync to host thread");
+                        if let Err(_) = sender.send(SyncPacket::MobUpdate(i as u16, this_ptr as u64, com)) {
+                            break 'mem;
+                        }
                     } else {
-                        sender.send(SyncPacket::MobNull(i as u16)).expect("Failed to send sync to host thread");
+                        if let Err(_) = sender.send(SyncPacket::MobNull(i as u16)){
+                            break 'mem;
+                        }
                     }
                 }
-            }
 
-            mob_updates += 1;
+                // TARGET
+                if zone != 0 {
+                    let target_sig = sigs.get(&SignatureType::Target).unwrap();
+                    let targets = read_target(*target_sig, &ffxiv);
+                    if let Err(_) = sender.send(SyncPacket::Target(targets)) { break 'mem; }
+                }
+            }
 
             sleep(Duration::from_millis(10));
         }
@@ -100,6 +107,12 @@ fn read_signature(signature: usize, ffxiv: &Pid) -> usize {
     let mut cur = Cursor::new(copy);
     let offset = cur.read_u32::<LittleEndian>().unwrap();
     offset as usize + signature + 4
+}
+
+fn read_target(signature: usize, ffxiv: &Pid) -> Target {
+    let target = read_signature(signature, ffxiv);
+    let target_bin = read_process_memory::copy_address(target, 512, &ffxiv as &Pid).unwrap();
+    Target::from_ffxiv_slice(target_bin)
 }
 
 fn read_mob(signature: usize, index: usize, ffxiv: &Pid) -> Option<(u64, Combatant)> {

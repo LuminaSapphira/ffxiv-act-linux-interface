@@ -1,6 +1,5 @@
 
-use std::io::prelude::*;
-use std::net::{TcpListener, UdpSocket};
+use std::net::{UdpSocket};
 
 use std::thread;
 
@@ -8,7 +7,7 @@ use std::error;
 use std::fmt;
 use std::thread::JoinHandle;
 
-use std::sync::mpsc::{Sender, Receiver, channel};
+use std::sync::mpsc::{Sender, channel};
 use crate::mem::packets::{SyncPacket, EncodePacket};
 use std::time::Duration;
 
@@ -46,6 +45,7 @@ pub fn run_server() -> (Sender<SyncPacket>, JoinHandle<Result<(), ServerError>>)
     }))
 }
 
+#[allow(dead_code)]
 pub enum ServerError {
     Binding,
     Connecting(std::io::Error)

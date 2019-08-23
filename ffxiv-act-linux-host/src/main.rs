@@ -21,6 +21,7 @@ use std::fs::File;
 use std::thread;
 use std::time::Duration;
 use std::sync::mpsc;
+use crate::net::get_src_port;
 
 fn main() {
     let config_fixed: Config = {
@@ -77,14 +78,36 @@ fn main() {
 
 fn wait_for_ffxiv() -> i32 {
     let mut ffxiv;
-
+    let mut port;
+    let mut said_message = false;
+    let mut said_ffxiv = false;
+    let mut said_port = false;
     loop {
         ffxiv = utils::find_ffxiv();
         if ffxiv.is_some() {
-            println!("Found FFXIV on PID {}", ffxiv.unwrap());
-            break;
+            if !said_ffxiv {
+                println!("Found FFXIV on PID {}!", ffxiv.unwrap());
+                said_ffxiv = true;
+            }
+            port = get_src_port(ffxiv.unwrap());
+            if port.is_some() {
+                println!("Found FFXIV network port at {}!", port.unwrap());
+                println!("Starting memory-sync and network-passthrough now...");
+                break;
+            } else {
+                if !said_port {
+                    println!("Waiting for FFXIV network connection...");
+                    said_port = true;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            said_message = false;
         } else {
-            println!("Waiting for FFXIV...");
+            if !said_message {
+                println!("Waiting for FFXIV...");
+                said_message = true;
+            }
+            said_ffxiv = false;
             std::thread::sleep(Duration::from_secs(1));
         }
     }

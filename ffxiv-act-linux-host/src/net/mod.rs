@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::pcap;
-use pcap::Device;
+use pcap::{Device, Capture};
 
 use etherparse::SlicedPacket;
 
@@ -27,13 +27,24 @@ pub fn start_packet_redirection(net_config: NetConfig, ffxiv: i32) -> bool {
             let device = device_opt.unwrap();
             println!("[NET] Attempting to capture on {}", device.name);
 
-            let device_open_res = device.open();
-            if device_open_res.is_err() {
+            let cap = Capture::from_device(device).unwrap();
+            let cap_res = cap.open();
+            if cap_res.is_err() {
                 eprintln!("[NET] Unable to open device for network capture. Are you root?");
                 return false;
             }
-            let mut cap = device_open_res.unwrap();
-            let src_port = get_src_port(ffxiv);
+            let mut cap = cap_res.unwrap();
+
+
+
+            let src_port_opt = get_src_port(ffxiv);
+            if src_port_opt.is_none() {
+                println!("[NET] FFXIV connection gone, stopping network-passthrough.");
+                return true;
+            }
+            let src_port = src_port_opt.unwrap();
+
+
             println!("[NET] Identified FFXIV Server port as {}, capturing traffic from that port.", src_port);
             cap.filter(format!("(src port {}) && (src host not {})", src_port, host_exclude).as_str()).expect("[NET] Unable to apply filters");
             println!("[NET] Setup pcap for network redirection");
@@ -71,7 +82,7 @@ pub fn start_packet_redirection(net_config: NetConfig, ffxiv: i32) -> bool {
 fn start_incoming_sync_host(bind_address: String) -> Option<mpsc::Sender<Vec<u8>>> {
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     if let Ok(tcp) = TcpListener::bind(&bind_address) {
-        println!("[NET] Opened fake ffxiv server on {}.", bind_address);
+        println!("[NET] TCP network-passthrough socket bound to {}.", bind_address);
         thread::spawn(move || {
             loop {
                 println!("[NET] Waiting for TCP client");
@@ -98,7 +109,7 @@ fn start_incoming_sync_host(bind_address: String) -> Option<mpsc::Sender<Vec<u8>
 
 }
 
-fn get_src_port(pid: i32) -> u16 {
+pub fn get_src_port(pid: i32) -> Option<u16> {
     use regex::Regex;
     let output = Command::new("lsof")
         .arg("-i")
@@ -109,9 +120,8 @@ fn get_src_port(pid: i32) -> u16 {
 
     let lsof = String::from_utf8(output.stdout).expect("Couldn't read lsof output");
     let re = Regex::new(r":(\d+) \(ESTABLISHED\)").unwrap();
-    let port_s = &re.captures_iter(lsof.as_str()).next().unwrap()[1];
-
-    let port = port_s.parse::<u16>().expect("Couldn't parse port");
-
-    port
+    re
+        .captures_iter(lsof.as_str())
+        .next()
+        .map(|cap| cap[1].parse::<u16>().expect("Couldn't parse port"))
 }

@@ -2,6 +2,7 @@ use crate::byteorder::{LittleEndian as LE, WriteBytesExt};
 use std::io::Cursor;
 use crate::mem::models::Target;
 
+#[derive(Clone)]
 pub enum SyncPacket {
     ZoneID(u32),
     MobUpdate(u16, u64, Vec<u8>),

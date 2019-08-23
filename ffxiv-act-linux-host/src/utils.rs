@@ -31,16 +31,18 @@ fn matches_with_wildcard<T>(window: &[T], needle: &[T], wild_ranges: &Vec<Range<
 
 }
 
-pub fn find_ffxiv() -> u16 {
+pub fn find_ffxiv() -> Option<i32> {
     let output = Command::new("pgrep")
         .arg("ffxiv_dx11.exe")
         .output()
         .expect("Unable to start pgrep to find ffxiv.");
-    if !output.status.success() {
-        panic!("Unable to find ffxiv.");
+    if output.status.success() {
+        let mut str_pid = String::from_utf8(output.stdout).expect("Unable to parse pgrep output");
+        str_pid.remove(str_pid.len() - 1);
+        let pid = str_pid.parse::<i32>().expect("Unable to parse pgrep output");
+        Some(pid)
+    } else {
+        None
     }
-    let mut str_pid = String::from_utf8(output.stdout).expect("Unable to parse pgrep output");
-    str_pid.remove(str_pid.len() - 1);
-    let pid = str_pid.parse::<u16>().expect("Unable to parse pgrep output");
-    pid
+
 }

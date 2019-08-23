@@ -1,6 +1,10 @@
 {
   "net_config": {
     "interface": "enp8s0",
-    "hostname_exclude": "kate-arch"
+    "hostname_exclude": "kate-arch",
+    "bind_address": "0.0.0.0:54992"
+  },
+  "mem_config": {
+    "bind_address": "0.0.0.0:7262"
   }
 }

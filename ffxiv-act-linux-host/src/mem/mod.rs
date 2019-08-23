@@ -3,25 +3,56 @@ mod reader;
 mod packets;
 mod models;
 
-use crate::Deserialize;
+use crate::{Deserialize, MemConfig};
 use crate::hex;
 use std::ops::Range;
+use proc_maps::Pid;
+use std::sync::mpsc;
+use crate::mem::reader::MemErrorType;
 
 /// Begins the memory portion of the interface. Starts a thread for memory reading and a thread for
 /// memory synchronization to the client.
-pub fn begin() {
+pub fn begin(ffxiv: Pid, mem_config: MemConfig) -> bool {
+    let (sender, receiver) = mpsc::channel();
+    let reader_result = reader::run_reader(sender, ffxiv);
+    match reader_result {
+        Ok(reader_handle) => {
+            let host_handle = host_server::run_server(receiver, mem_config.bind_address);
+            let host_fine = match host_handle.join() {
+                Ok(host_res) => {
+                    match host_res {
+                        Ok(_) => true,
+                        Err(server_error) => {
+                            eprintln!("[MEM] {:?}", server_error);
+                            false
+                        }
+                    }
+                },
+                Err(e) => panic!(e),
+            };
+            let reader_fine = match reader_handle.join() {
+                Ok(_) => true,
+                Err(e) => panic!(e),
+            };
+            host_fine && reader_fine
+        },
+        Err(mem_err) => {
+            match mem_err {
+                MemErrorType::OpeningSignatureFile => eprintln!("Failed to open signature file."),
+                MemErrorType::ReadingSignatureFile => eprintln!("Failed to read/parse signature file."),
+                MemErrorType::FindingSignature(sigs) => {
+                    eprintln!("Failed to find the following signatures:");
+                    for sig in sigs {
+                        eprintln!("{:?}", sig);
+                    }
+                },
+            }
+            false
+        }
+    }
 
-    let (sender, host_handle) = host_server::run_server();
-    let reader_handle = reader::run_reader(sender);
 
-    match host_handle.join() {
-        Ok(e) => e.unwrap(),
-        Err(e) => panic!(e),
-    };
-    match reader_handle.join() {
-        Ok(_) => {},
-        Err(e) => panic!(e),
-    };
+
 }
 
 #[derive(Deserialize)]

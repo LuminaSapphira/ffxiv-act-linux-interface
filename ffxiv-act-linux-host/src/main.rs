@@ -16,38 +16,95 @@ extern crate flate2;
 
 
 use serde::{Deserialize};
-use serde_json::from_reader;
 use std::fs::File;
 
 use std::thread;
+use std::time::Duration;
+use std::sync::mpsc;
 
 fn main() {
-    let config: Config = {
-        let mut file = File::open("config.json").expect("Couldn't open config file");
-        from_reader(&mut file).expect("Couldn't read / parse config file.")
+    let config_fixed: Config = {
+        if let Ok(file) = File::open("config.json") {
+            if let Ok(config) = serde_json::from_reader(file) {
+                config
+            } else {
+                eprintln!("Couldn't read / parse config file.");
+                std::process::exit(1);
+            }
+        } else {
+            eprintln!("Couldn't open config file.");
+            std::process::exit(1);
+        }
     };
 
-    let mem = thread::spawn(move || {
-        mem::begin()
-    });
+    loop {
+        let config = config_fixed.clone();
+        let ffxiv = wait_for_ffxiv();
 
-    let net = thread::spawn(move || {
-        net::start_packet_redirection(config.net_config)
-    });
+        let (tx, rx) = mpsc::channel();
+        let mem_tx = tx.clone();
+        let net_tx = tx;
 
-    mem.join().expect("Error in mem thread");
-    net.join().expect("Error in network thread");
+        let mem_config = config.mem_config;
+        let net_config = config.net_config;
 
+        // Memory
+        thread::spawn(move || {
+            if !mem::begin(ffxiv, mem_config) {
+                mem_tx.send(false).unwrap();
+            }
+            mem_tx.send(true).unwrap();
+        });
+
+        // Network
+        thread::spawn(move || {
+            if !net::start_packet_redirection(net_config, ffxiv) {
+                net_tx.send(false).unwrap();
+            }
+            net_tx.send(true).unwrap();
+        });
+
+        for rec in rx {
+            if !rec {
+                eprintln!("Terminating due to error in memory or network thread.");
+                std::process::exit(1);
+            }
+        }
+
+    }
 
 }
 
-#[derive(Deserialize)]
+fn wait_for_ffxiv() -> i32 {
+    let mut ffxiv;
+
+    loop {
+        ffxiv = utils::find_ffxiv();
+        if ffxiv.is_some() {
+            println!("Found FFXIV on PID {}", ffxiv.unwrap());
+            break;
+        } else {
+            println!("Waiting for FFXIV...");
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+    ffxiv.unwrap()
+}
+
+#[derive(Deserialize, Clone)]
 pub struct Config {
-    pub net_config: NetConfig
+    pub net_config: NetConfig,
+    pub mem_config: MemConfig,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct NetConfig {
     pub interface: String,
     pub hostname_exclude: String,
+    pub bind_address: String,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct MemConfig {
+    pub bind_address: String,
 }

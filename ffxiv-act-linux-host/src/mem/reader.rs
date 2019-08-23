@@ -30,10 +30,29 @@ pub enum SignatureType {
     Player,
 }
 
-pub fn run_reader(sender: Sender<SyncPacket>) -> JoinHandle<()> {
+pub enum MemErrorType {
+    OpeningSignatureFile,
+    ReadingSignatureFile,
+    FindingSignature(Vec<SignatureType>),
 
-    let mut file = File::open("signatures_64.json").expect("Couldn't open signature file");
-    let sigs: Signatures = from_reader(&mut file).expect("Unable to read/parse signature file");
+}
+
+fn open_sig_file() -> Result<File, MemErrorType> {
+    File::open("signatures_64.json").map_err(|_| MemErrorType::OpeningSignatureFile)
+}
+
+fn read_signatures(f: File) -> Result<Signatures, MemErrorType> {
+    from_reader(f).map_err(|_| MemErrorType::ReadingSignatureFile)
+}
+
+type SignatureMap = HashMap<SignatureType, usize>;
+
+struct SignatureResult {
+    pub signature_type: SignatureType,
+    pub signature: Option<usize>,
+}
+
+fn scan_signatures(sigs: Signatures, ffxiv: &Pid) -> Result<SignatureMap, MemErrorType> {
     let sigs_to_scan = vec![
         (SignatureType::Target, sigs.get_target()),
         (SignatureType::ChatLog, sigs.get_chat_log()),
@@ -43,61 +62,83 @@ pub fn run_reader(sender: Sender<SyncPacket>) -> JoinHandle<()> {
         (SignatureType::ZoneID, sigs.get_zone_id()),
         (SignatureType::Player, sigs.get_player())
     ];
-
     let max_sig_len = sigs_to_scan.iter().map(|a| a.1.signature_bytes.len()).max().unwrap();
 
-    let ffxiv = find_ffxiv();
-
-    let signature_map = sigs_to_scan
+    let (signature_map_res, signature_map_fail): (Vec<SignatureResult>, Vec<SignatureResult>) = sigs_to_scan
         .into_iter()
         .map(|a| {
-            let ret = (a.0, scan(ffxiv, a.1, max_sig_len).expect(format!("Unable to find signature for {:?}", a.0).as_str()));
-            println!("Found signature for {:?}", ret.0);
-            ret
+            let sig = scan(*ffxiv, a.1, max_sig_len);
+            SignatureResult{ signature_type: a.0, signature: sig }
         })
-        .collect::<HashMap<_,_>>();
+        .partition(|sig_res| sig_res.signature.is_some());
 
-    println!("All signatures found.");
+    if signature_map_fail.len() == 0 {
+        let map = signature_map_res.into_iter().map(|sig_res| (sig_res.signature_type, sig_res.signature.unwrap()))
+            .collect::<SignatureMap>();
+        println!("[MEM] Found all memory signatures");
+        Ok(map)
+    } else {
+        let failed = signature_map_fail.into_iter()
+            .map(|sig_res| sig_res.signature_type)
+            .collect::<Vec<_>>();
+        Err(MemErrorType::FindingSignature(failed))
+    }
 
-    spawn(move || {
-        let sigs = signature_map;
-        let ffxiv = ffxiv;
-        let sender = sender;
-        let base_addr = sigs.get(&SignatureType::ZoneID).unwrap();
-        'mem: loop {
-            // ZONE
-            let zone = read_zone_id(*base_addr, &ffxiv);
-            if let Err(_) = sender.send(SyncPacket::ZoneID(zone)) { break 'mem; }
+//    Ok(signature_map)
+
+}
 
 
-            if zone != 0 {
-                // MOB ARRAY
+pub fn run_reader(sender: Sender<SyncPacket>, ffxiv: Pid) -> Result<JoinHandle<()>, MemErrorType> {
 
-                let mob_array_ptr = sigs.get(&SignatureType::MobArray).unwrap();
-                for i in 0..421usize {
-                    let mob_opt = read_mob(*mob_array_ptr, i, &ffxiv);
-                    if let Some((this_ptr, combatant)) = mob_opt {
-                        let com = combatant.binary_serialize_compressed();
-                        if let Err(_) = sender.send(SyncPacket::MobUpdate(i as u16, this_ptr as u64, com)) {
-                            break 'mem;
+    open_sig_file()
+        .and_then(read_signatures)
+        .and_then(|a| scan_signatures(a, &ffxiv))
+        .and_then(|signature_map| {
+            Ok(spawn(move || {
+                let sigs = signature_map;
+                let ffxiv = ffxiv;
+                let sender = sender;
+                let base_addr = sigs.get(&SignatureType::ZoneID).unwrap();
+                'mem: loop {
+                    // ZONE
+                    let zone = read_zone_id(*base_addr, &ffxiv);
+                    if let Err(_) = sender.send(SyncPacket::ZoneID(zone)) { break 'mem; }
+
+
+                    if zone != 0 {
+                        // MOB ARRAY
+
+                        let mob_array_ptr = sigs.get(&SignatureType::MobArray).unwrap();
+                        for i in 0..421usize {
+                            let mob_opt = read_mob(*mob_array_ptr, i, &ffxiv);
+                            if let Some((this_ptr, combatant)) = mob_opt {
+                                let com = combatant.binary_serialize_compressed();
+                                if let Err(_) = sender.send(SyncPacket::MobUpdate(i as u16, this_ptr as u64, com)) {
+                                    break 'mem;
+                                }
+                            } else {
+                                if let Err(_) = sender.send(SyncPacket::MobNull(i as u16)){
+                                    break 'mem;
+                                }
+                            }
                         }
-                    } else {
-                        if let Err(_) = sender.send(SyncPacket::MobNull(i as u16)){
-                            break 'mem;
+
+                        // TARGET
+                        if zone != 0 {
+                            let target_sig = sigs.get(&SignatureType::Target).unwrap();
+                            let targets = read_target(*target_sig, &ffxiv);
+                            if let Err(_) = sender.send(SyncPacket::Target(targets)) { break 'mem; }
                         }
                     }
-                }
 
-                // TARGET
-                if zone != 0 {
-                    let target_sig = sigs.get(&SignatureType::Target).unwrap();
-                    let targets = read_target(*target_sig, &ffxiv);
-                    if let Err(_) = sender.send(SyncPacket::Target(targets)) { break 'mem; }
+                    sleep(Duration::from_millis(10));
                 }
-            }
+        }))
 
-            sleep(Duration::from_millis(10));
-        }
+
+
+
     })
 
 }
@@ -135,11 +176,12 @@ fn read_zone_id(signature: usize, ffxiv: &Pid) -> u32 {
     let mut cur = Cursor::new(zone_id);
     cur.read_u32::<LittleEndian>().unwrap()
 }
-
-fn find_ffxiv() -> Pid {
-    let pid = utils::find_ffxiv() as i32;
-    pid as Pid
-}
+//
+//fn find_ffxiv() -> Option<Pid> {
+//
+//    let pid = utils::find_ffxiv()
+//    pid as Pid
+//}
 
 impl std::fmt::Debug for SignatureType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

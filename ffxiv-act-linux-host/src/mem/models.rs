@@ -9,6 +9,7 @@ use bincode;
 
 use flate2::{GzBuilder, Compression};
 
+#[derive(Copy, Clone)]
 pub struct Target {
     pub target: u64,
     pub hover_target: u64,

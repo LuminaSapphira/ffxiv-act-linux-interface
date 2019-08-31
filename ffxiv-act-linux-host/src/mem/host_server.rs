@@ -77,15 +77,16 @@ pub fn run_server(rx: Receiver<SyncPacket>, addr: String) -> JoinHandle<Result<(
                             }
                         }
                     });
-
+                    let mut sync_sequence = 0u64;
                     'mem_sync: for sync in udp_rx {
-                        let buf = sync.encode_packet();
+                        let buf = sync.encode_packet(sync_sequence);
                         udp_ref2.send_to(buf.as_slice(), &client).unwrap();
                         if let Some(_) = stop_channnel_rx.try_iter().next() {
                             println!("[MEM] {} missed too many heartbeats, disconnecting.", client);
                             cc3.lock().unwrap().remove(&client);
                             break 'mem_sync;
                         }
+                        sync_sequence += 1;
                     }
                 });
             } else if recv_buffer == KEEP_ALIVE_MAGIC {

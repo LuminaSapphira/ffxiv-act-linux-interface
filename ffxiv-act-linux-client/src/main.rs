@@ -97,7 +97,7 @@ fn handle_target_packet<R: ReadBytesExt>(data: &mut R, mob_array_heap: &mut Hash
 }
 
 fn handle_server_time_packet<R: ReadBytesExt>(data: &mut R) {
-    let time = data.read_u64().unwrap();
+    let time = data.read_u64::<LittleEndian>().unwrap();
     unsafe { set_server_time(time) }
 }
 

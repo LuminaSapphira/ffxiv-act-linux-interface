@@ -17,6 +17,7 @@ pub struct Target {
 }
 
 impl Target {
+    #[allow(dead_code)]
     pub fn from_ffxiv_slice<D: AsRef<[u8]>>(slice: D) -> Target {
         Target::try_from_ffxiv_slice(slice).expect("Unable to read target data")
     }
@@ -87,6 +88,7 @@ pub struct Combatant {
 }
 
 impl Combatant {
+    #[allow(dead_code)]
     pub fn from_slice<D: AsRef<[u8]>>(slice: D) -> Combatant {
         Combatant::try_from_slice(slice).expect("Unable to read combatant")
     }

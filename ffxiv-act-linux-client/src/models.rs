@@ -112,7 +112,7 @@ pub struct Player {
 }
 
 
-pub static SERVER_3: ServerTimePart3 = ServerTimePart3::create();
+pub static mut SERVER_3: ServerTimePart3 = ServerTimePart3::create();
 pub static mut SERVER_2: ServerTimePart2 = ServerTimePart2::create();
 pub static mut SERVER_1: ServerTimePart1 = ServerTimePart1::create();
 

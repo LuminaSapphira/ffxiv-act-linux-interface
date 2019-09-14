@@ -9,7 +9,7 @@ use crate::mem::{Signatures, Signature};
 use crate::read_process_memory::{Pid, TryIntoProcessHandle, ProcessHandle, CopyAddress};
 use crate::utils;
 use crate::proc_maps::{get_process_maps};
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian as LE, ReadBytesExt};
 use std::io::Cursor;
 use std::time::Duration;
 use crate::mem::packets::SyncPacket;
@@ -101,6 +101,12 @@ pub fn run_reader(sender: Sender<SyncPacket>, ffxiv: Pid) -> Result<JoinHandle<(
                 let sender = sender;
                 let base_addr = sigs.get(&SignatureType::ZoneID).unwrap();
                 'mem: loop {
+
+
+                    if let Ok(server_time) = read_server_time(*sigs.get(&SignatureType::ServerTime).unwrap(), &ffxiv) {
+                        if let Err(_) = sender.send(SyncPacket::ServerTime(server_time)) { break 'mem; }
+                    }
+
                     // ZONE
                     if let Ok(zone) = read_zone_id(*base_addr, &ffxiv) {
                         if let Err(_) = sender.send(SyncPacket::ZoneID(zone)) { break 'mem; }
@@ -168,12 +174,12 @@ impl std::fmt::Display for ReadingError {
 }
 
 
-fn read_signature(signature: usize, ffxiv: &Pid) -> Result<usize, ReadingError> {
-    read_process_memory::copy_address(signature, 4, ffxiv as &Pid)
+fn read_signature<C: CopyAddress>(signature: usize, ffxiv: &C) -> Result<usize, ReadingError> {
+    read_process_memory::copy_address(signature, 4, ffxiv)
         .map_err(|_| ReadingError::ReadingProcessMemory)
         .and_then(|copy| {
             let mut cur = Cursor::new(copy);
-            cur.read_u32::<LittleEndian>().map_err(|_| ReadingError::ReadingData)
+            cur.read_u32::<LE>().map_err(|_| ReadingError::ReadingData)
         })
         .map(|offset| offset as usize + signature + 4)
 
@@ -185,6 +191,35 @@ fn read_target(signature: usize, ffxiv: &Pid) -> Result<Target, ReadingError> {
         .and_then(|data| Target::try_from_ffxiv_slice(data).map_err(|_| ReadingError::ReadingData))
 }
 
+fn read_server_time<C: CopyAddress>(signature: usize, ffxiv: &C) -> Result<u64, ReadingError> {
+    const OFFSET_1: usize = 72;
+    const OFFSET_2: usize = 8;
+    const OFFSET_3: usize = 2116;
+    read_signature(signature, ffxiv)
+        .and_then(|time_ptr| read_process_memory::copy_address(time_ptr, 8, ffxiv).map_err(|_| ReadingError::ReadingProcessMemory))
+        .and_then(|ptr1| ptr1.as_slice().read_u64::<LE>().map_err(|_| ReadingError::ReadingData))
+        .map(|ptr1| ptr1 as usize + OFFSET_1)
+        .and_then(|incptr1| {
+            if incptr1 - OFFSET_1 != 0 {
+                read_process_memory::copy_address(incptr1, 8, ffxiv).map_err(|_| ReadingError::ReadingProcessMemory)
+            } else { Ok(vec![0; 8]) } } )
+        .and_then(|ptr2| ptr2.as_slice().read_u64::<LE>().map_err(|_| ReadingError::ReadingData))
+        .map(|ptr2| ptr2 as usize + OFFSET_2)
+        .and_then(|incptr2| {
+            if incptr2 - OFFSET_2 == 0 {
+                read_process_memory::copy_address(incptr2, 8, ffxiv).map_err(|_| ReadingError::ReadingProcessMemory)
+            } else { Ok(vec![0; 8]) } })
+        .and_then(|ptr3| ptr3.as_slice().read_u64::<LE>().map_err(|_| ReadingError::ReadingData))
+        .map(|ptr3| ptr3 as usize + OFFSET_3)
+        .and_then(|incptr3| {
+            if incptr3 - OFFSET_3 == 0 {
+                read_process_memory::copy_address(incptr3, 8, ffxiv).map_err(|_| ReadingError::ReadingProcessMemory)
+            } else { Ok(vec![0; 8]) }
+        })
+        .and_then(|server_time_vec| server_time_vec.as_slice().read_u64::<LE>().map_err(|_| ReadingError::ReadingData))
+
+}
+
 fn read_mob(signature: usize, index: usize, ffxiv: &Pid) -> Result<Option<(u64, Combatant)>, ReadingError> {
 
     read_signature(signature, ffxiv)
@@ -194,7 +229,7 @@ fn read_mob(signature: usize, index: usize, ffxiv: &Pid) -> Result<Option<(u64, 
         })
         .and_then(|mob_ptr_vec| {
             let mut cursor = Cursor::new(mob_ptr_vec);
-            let mob_ptr = cursor.read_u64::<LittleEndian>().map_err(|_| ReadingError::ReadingData)? as usize;
+            let mob_ptr = cursor.read_u64::<LE>().map_err(|_| ReadingError::ReadingData)? as usize;
 //            let mob_ptr = LittleEndian::read_u64(mob_ptr_vec.as_slice()) as usize;
             if mob_ptr != 0 {
                 let data = read_process_memory::copy_address(mob_ptr, 11520, &ffxiv as &Pid).map_err(|_| ReadingError::ReadingProcessMemory)?;
@@ -214,7 +249,7 @@ fn read_zone_id(signature: usize, ffxiv: &Pid) -> Result<u32, ReadingError> {
         })
         .and_then(|zone_id| {
             let mut cur = Cursor::new(zone_id);
-            cur.read_u32::<LittleEndian>().map_err(|_| ReadingError::ReadingData)
+            cur.read_u32::<LE>().map_err(|_| ReadingError::ReadingData)
         })
 }
 

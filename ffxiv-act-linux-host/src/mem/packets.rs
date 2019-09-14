@@ -6,7 +6,8 @@ pub enum SyncPacket {
     ZoneID(u32),
     MobUpdate(u16, u64, Vec<u8>),
     MobNull(u16),
-    Target(Target)
+    Target(Target),
+    ServerTime(u64),
 }
 
 pub trait EncodePacket {
@@ -26,6 +27,7 @@ impl EncodePacket for SyncPacket {
             SyncPacket::MobUpdate(index, pointer, mob_data) => write_mob_packet(header, index, pointer, mob_data),
             SyncPacket::MobNull(index) => write_mob_null_packet(header, index),
             SyncPacket::Target(target) => write_target_packet(header, target),
+            SyncPacket::ServerTime(server_time) => write_server_time_packet(header, server_time),
         };
         encoded.shrink_to_fit();
         encoded
@@ -39,12 +41,19 @@ fn get_packet_id(packet_data: &SyncPacket) -> u8 {
         SyncPacket::MobUpdate(_, _, _) => 2,
         SyncPacket::MobNull(_) => 3,
         SyncPacket::Target(_) => 4,
+        SyncPacket::ServerTime(_) => 5,
     }
 }
 
 fn write_zone_packet(header: Vec<u8>, zone_id: u32) -> Vec<u8> {
     let mut packet = header;
     packet.write_u32::<LE>(zone_id).unwrap();
+    packet
+}
+
+fn write_server_time_packet(header: Vec<u8>, server_time: u64) -> Vec<u8> {
+    let mut packet = header;
+    packet.write_u64::<LE>(server_time).unwrap();
     packet
 }
 
@@ -123,4 +132,12 @@ mod sync_packet_tests {
         assert_eq!(packet, expected);
     }
 
+    #[test]
+    fn encode_server_packet() {
+        let packet = SyncPacket::ServerTime(1234);
+        let packet = packet.encode_packet(987);
+        let expected = vec![5u8, 0xdb, 0x03, 0,0,0,0,0,0, 0xd2, 0x04, 0,0,0,0,0,0 ];
+        assert_eq!(packet.len(), expected.len());
+        assert_eq!(packet, expected);
+    }
 }

@@ -96,6 +96,11 @@ fn handle_target_packet<R: ReadBytesExt>(data: &mut R, mob_array_heap: &mut Hash
 
 }
 
+fn handle_server_time_packet<R: ReadBytesExt>(data: &mut R) {
+    let time = data.read_u64().unwrap();
+    unsafe { set_server_time(time) }
+}
+
 fn get_client_mob_pointer_from_host(host_pointer: u64, mob_array_heap: &mut HashMap<u16, (u64, Box<[u8; 11520]>)>) -> u64 {
     if host_pointer != 0 {
         let (_, mob) = mob_array_heap.values().find(|(ptr, _)| *ptr == host_pointer).unwrap();
@@ -261,6 +266,7 @@ fn start_mem_sync_client(addr: String, thread_ctl: mpsc::Sender<ThreadControlMsg
                                 0x02 => handle_mob_packet(&mut cursor, &mut mob_array_heap),
                                 0x03 => handle_mob_null_packet(&mut cursor, &mut mob_array_heap),
                                 0x04 => handle_target_packet(&mut cursor, &mut mob_array_heap),
+                                0x05 => handle_server_time_packet(&mut cursor),
                                 _ => panic!("Unknown packet type"),
                             }
                         }
@@ -302,4 +308,8 @@ unsafe fn setup_memory() {
 
 unsafe fn set_zone(zone: u32) {
     ALL_MEMORY.zone_id.data = zone;
+}
+
+unsafe fn set_server_time(server_time: u64) {
+    SERVER_3.data = server_time
 }

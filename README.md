@@ -23,15 +23,14 @@ on linux, duplicates them, and sends them to the client in the VM (where they ar
 The ACT plugin can then read the network data for the best accuracy.
 
 #### How to use it
-This utility is under ***heavy*** development. It'll crash, break itself, and spit out
-panic messages left and right. That being said, if you want the bleeding edge, here's
-a guide:
+This utility is under development. At this point, it's mostly able to produce valid memory mappings, and it should be stable enough to use for FFLogs. However, it doesn't yet copy over all data, most significantly the chat log. This means you won't
+be able to write triggers that depend on chat log lines. Because I only support network parsing however, you're still able
+to parse accurately without it; you just won't be able to use most triggers.
 
 1. Compile the host on linux, and the client on Windows (in your VM perhaps). 
 2. Use the `config.json` files in this repo to configure the host's IP address on the client. For now, the port isn't configurable. (its 7262)
 3. On the host, copy the `signatures-64.json` and `config.json` file to the application's folder. Configure the interface that FFXIV will run on for packet capture, and your computer's hostname to not double-capture packets sent to the VM. This might be automatic in the future.
 4. Run the host application as root (sudo), or use the provided script to give the packet capture capability to the executable.
 5. On the VM, run the client and ACT in any order. ACT should pick up the client and begin parsing.
-6. Wait for it to crash / have a miscellaneous bug as it definitely will.
-7. Tell me all about it in the issue tracker.
+7. Tell me all about crashes or bugs in the issue tracker.
 8. Sob quietly when you realize that not all features are implemented yet.

@@ -102,7 +102,7 @@ pub fn run_reader(sender: Sender<SyncPacket>, ffxiv: Pid) -> Result<JoinHandle<(
                 let base_addr = sigs.get(&SignatureType::ZoneID).unwrap();
                 'mem: loop {
 
-
+                    // SERVER TIME
                     if let Ok(server_time) = read_server_time(*sigs.get(&SignatureType::ServerTime).unwrap(), &ffxiv) {
                         if let Err(_) = sender.send(SyncPacket::ServerTime(server_time)) { break 'mem; }
                     }

@@ -17,10 +17,15 @@ pub struct Target {
 }
 
 impl Target {
+    #[allow(dead_code)]
     pub fn from_ffxiv_slice<D: AsRef<[u8]>>(slice: D) -> Target {
+        Target::try_from_ffxiv_slice(slice).expect("Unable to read target data")
+    }
+
+    pub fn try_from_ffxiv_slice<D: AsRef<[u8]>>(slice: D) -> std::io::Result<Target> {
         let slice = slice.as_ref();
         let mut cursor = Cursor::new(slice);
-        Ok::<(), Box<dyn std::error::Error>>(()).and_then(|_| {
+        Ok(()).and_then(|_| {
             cursor.set_position(192);
             let target = cursor.read_u64::<LE>()?;
             let hover_target = cursor.read_u64::<LE>()?;
@@ -28,8 +33,7 @@ impl Target {
             let focus_target = cursor.read_u64::<LE>()?;
 
             Ok(Target { target, focus_target, hover_target })
-        }).expect("Couldn't read target.")
-
+        })
     }
 
     #[allow(dead_code)]
@@ -84,10 +88,14 @@ pub struct Combatant {
 }
 
 impl Combatant {
-    pub fn from_slice(slice: &[u8]) -> Combatant {
+    #[allow(dead_code)]
+    pub fn from_slice<D: AsRef<[u8]>>(slice: D) -> Combatant {
+        Combatant::try_from_slice(slice).expect("Unable to read combatant")
+    }
 
+    pub fn try_from_slice<D: AsRef<[u8]>>(slice: D) -> std::io::Result<Combatant> {
         let mut cursor= Cursor::new(slice);
-        Ok::<(), Box<dyn std::error::Error>>(())
+        Ok(())
             .and_then(|_| {
 
                 let id: u32;
@@ -205,7 +213,7 @@ impl Combatant {
                     cast_duration_max
                 })
 
-            }).expect("Unable to read combatant")
+            })
     }
 
     pub fn binary_serialize_compressed(&self) -> Vec<u8> {
@@ -230,9 +238,9 @@ mod models_tests {
 
     #[test]
     fn combatant_serialize() {
-        let a = Combatant::from_slice(&[0u8; 7308]);
+        let a = Combatant::from_slice(&[0u8; 7308].as_ref());
         let mut compress_vec = Vec::new();
-        let mut cursor = Cursor::new(&mut compress_vec);
+        let cursor = Cursor::new(&mut compress_vec);
         let mut g = flate2::write::GzEncoder::new(cursor, flate2::Compression::default());
         g.write_all(bincode::serialize(&a).unwrap().as_ref()).unwrap();
         g.finish().unwrap();

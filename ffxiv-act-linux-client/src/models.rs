@@ -69,7 +69,6 @@ pub struct ChatLogHeader {
 pub struct MobArray {
     signature: [u8; 20],
     offset: [u8; 4],
-    // TODO
     // Array of 421 pointers to heap-allocated mobs
     pub data: [u64; 421],
 }
@@ -113,7 +112,7 @@ pub struct Player {
 }
 
 
-pub static SERVER_3: ServerTimePart3 = ServerTimePart3::create();
+pub static mut SERVER_3: ServerTimePart3 = ServerTimePart3::create();
 pub static mut SERVER_2: ServerTimePart2 = ServerTimePart2::create();
 pub static mut SERVER_1: ServerTimePart1 = ServerTimePart1::create();
 

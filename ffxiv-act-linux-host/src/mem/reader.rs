@@ -9,7 +9,7 @@ use crate::mem::{Signatures, Signature};
 use crate::read_process_memory::{Pid, TryIntoProcessHandle, ProcessHandle, CopyAddress};
 use crate::utils;
 use crate::proc_maps::{get_process_maps};
-use byteorder::{LittleEndian, ReadBytesExt, ByteOrder};
+use byteorder::{LittleEndian as LE, ReadBytesExt};
 use std::io::Cursor;
 use std::time::Duration;
 use crate::mem::packets::SyncPacket;
@@ -101,35 +101,44 @@ pub fn run_reader(sender: Sender<SyncPacket>, ffxiv: Pid) -> Result<JoinHandle<(
                 let sender = sender;
                 let base_addr = sigs.get(&SignatureType::ZoneID).unwrap();
                 'mem: loop {
+
+                    // SERVER TIME
+                    if let Ok(server_time) = read_server_time(*sigs.get(&SignatureType::ServerTime).unwrap(), &ffxiv) {
+                        if let Err(_) = sender.send(SyncPacket::ServerTime(server_time)) { break 'mem; }
+                    }
+
                     // ZONE
-                    let zone = read_zone_id(*base_addr, &ffxiv);
-                    if let Err(_) = sender.send(SyncPacket::ZoneID(zone)) { break 'mem; }
+                    if let Ok(zone) = read_zone_id(*base_addr, &ffxiv) {
+                        if let Err(_) = sender.send(SyncPacket::ZoneID(zone)) { break 'mem; }
 
+                        if zone != 0 {
+                            // MOB ARRAY
 
-                    if zone != 0 {
-                        // MOB ARRAY
-
-                        let mob_array_ptr = sigs.get(&SignatureType::MobArray).unwrap();
-                        for i in 0..421usize {
-                            let mob_opt = read_mob(*mob_array_ptr, i, &ffxiv);
-                            if let Some((this_ptr, combatant)) = mob_opt {
-                                let com = combatant.binary_serialize_compressed();
-                                if let Err(_) = sender.send(SyncPacket::MobUpdate(i as u16, this_ptr as u64, com)) {
-                                    break 'mem;
+                            let mob_array_ptr = sigs.get(&SignatureType::MobArray).unwrap();
+                            for i in 0..421usize {
+                                if let Ok(mob_opt) = read_mob(*mob_array_ptr, i, &ffxiv) {
+                                    if let Some((this_ptr, combatant)) = mob_opt {
+                                        let com = combatant.binary_serialize_compressed();
+                                        if let Err(_) = sender.send(SyncPacket::MobUpdate(i as u16, this_ptr as u64, com)) {
+                                            break 'mem;
+                                        }
+                                    } else {
+                                        if let Err(_) = sender.send(SyncPacket::MobNull(i as u16)) {
+                                            break 'mem;
+                                        }
+                                    }
                                 }
-                            } else {
-                                if let Err(_) = sender.send(SyncPacket::MobNull(i as u16)){
-                                    break 'mem;
-                                }
+                            }
+
+                            // TARGET
+                            let target_sig = sigs.get(&SignatureType::Target).unwrap();
+                            if let Ok(targets) = read_target(*target_sig, &ffxiv) {
+                                if let Err(_) = sender.send(SyncPacket::Target(targets)) { break 'mem; }
                             }
                         }
 
-                        // TARGET
-                        if zone != 0 {
-                            let target_sig = sigs.get(&SignatureType::Target).unwrap();
-                            let targets = read_target(*target_sig, &ffxiv);
-                            if let Err(_) = sender.send(SyncPacket::Target(targets)) { break 'mem; }
-                        }
+                    } else {
+                        break 'mem;
                     }
 
                     sleep(Duration::from_millis(10));
@@ -143,45 +152,106 @@ pub fn run_reader(sender: Sender<SyncPacket>, ffxiv: Pid) -> Result<JoinHandle<(
 
 }
 
-fn read_signature(signature: usize, ffxiv: &Pid) -> usize {
-    let copy = read_process_memory::copy_address(signature, 4, ffxiv as &Pid).unwrap();
-    let mut cur = Cursor::new(copy);
-    let offset = cur.read_u32::<LittleEndian>().unwrap();
-    offset as usize + signature + 4
+enum ReadingError {
+    ReadingProcessMemory,
+    ReadingData
 }
 
-fn read_target(signature: usize, ffxiv: &Pid) -> Target {
-    let target = read_signature(signature, ffxiv);
-    let target_bin = read_process_memory::copy_address(target, 512, &ffxiv as &Pid).unwrap();
-    Target::from_ffxiv_slice(target_bin)
-}
-
-fn read_mob(signature: usize, index: usize, ffxiv: &Pid) -> Option<(u64, Combatant)> {
-
-    let mob_array = read_signature(signature, ffxiv);
-    let mob_ptr_ptr = mob_array + 8 * index;
-    let mob_ptr_vec = read_process_memory::copy_address(mob_ptr_ptr, 8, &ffxiv as &Pid).unwrap();
-    let mob_ptr = LittleEndian::read_u64(mob_ptr_vec.as_slice()) as usize;
-    if mob_ptr != 0 {
-        let mob_data = read_process_memory::copy_address(mob_ptr, 11520, &ffxiv as &Pid).unwrap();
-        Some((mob_ptr as u64, Combatant::from_slice(mob_data.as_slice())))
-    } else {
-        None
+impl std::error::Error for ReadingError {}
+impl std::fmt::Debug for ReadingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ReadingError::ReadingProcessMemory => write!(f, "Reading process memory"),
+            ReadingError::ReadingData => write!(f, "Reading data from process memory"),
+        }
     }
 }
 
-fn read_zone_id(signature: usize, ffxiv: &Pid) -> u32 {
-    let zone_id_addr= read_signature(signature, ffxiv);
-    let zone_id = read_process_memory::copy_address(zone_id_addr, 4, &ffxiv as &Pid).unwrap();
-    let mut cur = Cursor::new(zone_id);
-    cur.read_u32::<LittleEndian>().unwrap()
+impl std::fmt::Display for ReadingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
-//
-//fn find_ffxiv() -> Option<Pid> {
-//
-//    let pid = utils::find_ffxiv()
-//    pid as Pid
-//}
+
+
+fn read_signature<C: CopyAddress>(signature: usize, ffxiv: &C) -> Result<usize, ReadingError> {
+    read_process_memory::copy_address(signature, 4, ffxiv)
+        .map_err(|_| ReadingError::ReadingProcessMemory)
+        .and_then(|copy| {
+            let mut cur = Cursor::new(copy);
+            cur.read_u32::<LE>().map_err(|_| ReadingError::ReadingData)
+        })
+        .map(|offset| offset as usize + signature + 4)
+
+}
+
+fn read_target(signature: usize, ffxiv: &Pid) -> Result<Target, ReadingError> {
+    read_signature(signature, ffxiv)
+        .and_then(|target| read_process_memory::copy_address(target, 512, &ffxiv as &Pid).map_err(|_| ReadingError::ReadingProcessMemory))
+        .and_then(|data| Target::try_from_ffxiv_slice(data).map_err(|_| ReadingError::ReadingData))
+}
+
+fn read_server_time<C: CopyAddress>(signature: usize, ffxiv: &C) -> Result<u64, ReadingError> {
+    const OFFSET_1: usize = 72;
+    const OFFSET_2: usize = 8;
+    const OFFSET_3: usize = 2116;
+    read_signature(signature, ffxiv)
+        .and_then(|time_ptr| read_process_memory::copy_address(time_ptr, 8, ffxiv).map_err(|_| ReadingError::ReadingProcessMemory))
+        .and_then(|ptr1| ptr1.as_slice().read_u64::<LE>().map_err(|_| ReadingError::ReadingData))
+        .map(|ptr1| ptr1 as usize + OFFSET_1)
+        .and_then(|incptr1| {
+            if incptr1 - OFFSET_1 != 0 {
+                read_process_memory::copy_address(incptr1, 8, ffxiv).map_err(|_| ReadingError::ReadingProcessMemory)
+            } else { Ok(vec![0; 8]) } } )
+        .and_then(|ptr2| ptr2.as_slice().read_u64::<LE>().map_err(|_| ReadingError::ReadingData))
+        .map(|ptr2| ptr2 as usize + OFFSET_2)
+        .and_then(|incptr2| {
+            if incptr2 - OFFSET_2 == 0 {
+                read_process_memory::copy_address(incptr2, 8, ffxiv).map_err(|_| ReadingError::ReadingProcessMemory)
+            } else { Ok(vec![0; 8]) } })
+        .and_then(|ptr3| ptr3.as_slice().read_u64::<LE>().map_err(|_| ReadingError::ReadingData))
+        .map(|ptr3| ptr3 as usize + OFFSET_3)
+        .and_then(|incptr3| {
+            if incptr3 - OFFSET_3 == 0 {
+                read_process_memory::copy_address(incptr3, 8, ffxiv).map_err(|_| ReadingError::ReadingProcessMemory)
+            } else { Ok(vec![0; 8]) }
+        })
+        .and_then(|server_time_vec| server_time_vec.as_slice().read_u64::<LE>().map_err(|_| ReadingError::ReadingData))
+
+}
+
+fn read_mob(signature: usize, index: usize, ffxiv: &Pid) -> Result<Option<(u64, Combatant)>, ReadingError> {
+
+    read_signature(signature, ffxiv)
+        .and_then(|mob_array| {
+            let mob_ptr_ptr = mob_array + 8 * index;
+            read_process_memory::copy_address(mob_ptr_ptr, 8, &ffxiv as &Pid).map_err(|_| ReadingError::ReadingProcessMemory)
+        })
+        .and_then(|mob_ptr_vec| {
+            let mut cursor = Cursor::new(mob_ptr_vec);
+            let mob_ptr = cursor.read_u64::<LE>().map_err(|_| ReadingError::ReadingData)? as usize;
+//            let mob_ptr = LittleEndian::read_u64(mob_ptr_vec.as_slice()) as usize;
+            if mob_ptr != 0 {
+                let data = read_process_memory::copy_address(mob_ptr, 11520, &ffxiv as &Pid).map_err(|_| ReadingError::ReadingProcessMemory)?;
+                let combatant = Combatant::try_from_slice(data).map_err(|_| ReadingError::ReadingData)?;
+                Ok(Some((mob_ptr as u64, combatant)))
+            } else {
+                Ok(None)
+            }
+        })
+
+}
+
+fn read_zone_id(signature: usize, ffxiv: &Pid) -> Result<u32, ReadingError> {
+    read_signature(signature, ffxiv)
+        .and_then(|zone_id_addr| {
+            read_process_memory::copy_address(zone_id_addr, 4, &ffxiv as &Pid).map_err(|_| ReadingError::ReadingProcessMemory)
+        })
+        .and_then(|zone_id| {
+            let mut cur = Cursor::new(zone_id);
+            cur.read_u32::<LE>().map_err(|_| ReadingError::ReadingData)
+        })
+}
 
 impl std::fmt::Debug for SignatureType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -244,4 +314,31 @@ fn scan(pid: Pid, signature: Signature, max_sig_len: usize) -> Option<usize> {
     }
 
     ret
+}
+
+#[cfg(test)]
+mod reader_tests {
+    use std::ffi::CString;
+    use std::time::Instant;
+
+    #[test]
+    fn reader_test() {
+        use crate::mem::reader::*;
+        use std::sync::mpsc;
+        use crate::mem::packets::SyncPacket;
+        let (sender, recv) = mpsc::channel();
+        run_reader(sender, crate::utils::find_ffxiv().unwrap());
+        let mut inst = Instant::now();
+        for rx in recv {
+            if let SyncPacket::MobUpdate(index, _ptr, data) = rx {
+                if index == 0 && inst.elapsed().as_secs() >= 1 {
+                    inst = Instant::now();
+                    let pc = crate::mem::models::Combatant::from_slice(&data);
+                    let name = CString::new(pc.name.as_ref()).unwrap();
+                    let name = name.to_str().unwrap();
+                    println!("[Name: {}, X: {}, Y: {}, Z: {}]", name, pc.pos_x, pc.pos_y, pc.pos_z);
+                }
+            }
+        }
+    }
 }

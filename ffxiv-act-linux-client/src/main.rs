@@ -24,6 +24,7 @@ use crate::internal_models::Combatant;
 use std::io::Cursor;
 use std::fmt::Display;
 use std::time::{Duration, Instant};
+use std::error::Error;
 
 
 static mut ALL_MEMORY: AllMemory = AllMemory::create();
@@ -95,6 +96,11 @@ fn handle_target_packet<R: ReadBytesExt>(data: &mut R, mob_array_heap: &mut Hash
 
 }
 
+fn handle_server_time_packet<R: ReadBytesExt>(data: &mut R) {
+    let time = data.read_u64::<LittleEndian>().unwrap();
+    unsafe { set_server_time(time) }
+}
+
 fn get_client_mob_pointer_from_host(host_pointer: u64, mob_array_heap: &mut HashMap<u16, (u64, Box<[u8; 11520]>)>) -> u64 {
     if host_pointer != 0 {
         let (_, mob) = mob_array_heap.values().find(|(ptr, _)| *ptr == host_pointer).unwrap();
@@ -105,6 +111,7 @@ fn get_client_mob_pointer_from_host(host_pointer: u64, mob_array_heap: &mut Hash
 
 enum ThreadControlMsg {
     Ending(ThreadType),
+    Error(ThreadType, Box<dyn Error + Send>),
     UnableToConnect(ThreadType),
     ReadTimeOut(ThreadType),
 }
@@ -128,8 +135,19 @@ fn main() {
         unsafe { setup_memory(); }
 
         let config: Config = {
-            let mut file = File::open("config.json").expect("Unable to open config file");
-            from_reader(&mut file).expect("Unable to read / parse config file")
+            let file_res = File::open("config.json");
+            if let Ok(file) = file_res {
+                match from_reader(file) {
+                    Ok(conf) => conf,
+                    Err(e) => {
+                        eprintln!("Unable to read / parse config file: {}", e.description());
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                eprintln!("Unable to open config file.");
+                std::process::exit(1);
+            }
         };
 
 
@@ -150,6 +168,11 @@ fn main() {
                 },
                 ThreadControlMsg::ReadTimeOut(t) => {
                     println!("{} Read timed out.", t);
+                    break 'outer;
+                },
+                ThreadControlMsg::Error(t, err) => {
+                    println!("{} Errored!", t);
+                    eprintln!("{:?}", err);
                     break 'outer;
                 }
             }
@@ -218,8 +241,8 @@ fn start_mem_sync_client(addr: String, thread_ctl: mpsc::Sender<ThreadControlMsg
         });
 
         let start_instant = Instant::now();
-        let mut last_recv = None;
-
+        let mut last_recv: Option<Instant> = None;
+        let mut last_seq: u64 = 0;
         'mem: loop {
             match udp_client.recv(&mut buffer) {
                 Ok(num) => {
@@ -230,12 +253,22 @@ fn start_mem_sync_client(addr: String, thread_ctl: mpsc::Sender<ThreadControlMsg
                         }
                         last_recv = Some(Instant::now());
                         let mut cursor = Cursor::new(&buffer[1..]);
-                        match buffer[0] {
-                            0x01 => handle_zone_packet(&mut cursor),
-                            0x02 => handle_mob_packet(&mut cursor, &mut mob_array_heap),
-                            0x03 => handle_mob_null_packet(&mut cursor, &mut mob_array_heap),
-                            0x04 => handle_target_packet(&mut cursor, &mut mob_array_heap),
-                            _ => panic!("Unknown packet type"),
+                        let seq = cursor.read_u64::<LittleEndian>();
+                        if seq.is_err() {
+                            thread_ctl.send(ThreadControlMsg::Error(ThreadType::Mem, Box::new(seq.unwrap_err()))).unwrap();
+                            break 'mem;
+                        }
+                        let seq = seq.unwrap();
+                        if seq > last_seq {
+                            last_seq = seq;
+                            match buffer[0] {
+                                0x01 => handle_zone_packet(&mut cursor),
+                                0x02 => handle_mob_packet(&mut cursor, &mut mob_array_heap),
+                                0x03 => handle_mob_null_packet(&mut cursor, &mut mob_array_heap),
+                                0x04 => handle_target_packet(&mut cursor, &mut mob_array_heap),
+                                0x05 => handle_server_time_packet(&mut cursor),
+                                _ => panic!("Unknown packet type"),
+                            }
                         }
                     } else {
                         break 'mem;
@@ -275,4 +308,8 @@ unsafe fn setup_memory() {
 
 unsafe fn set_zone(zone: u32) {
     ALL_MEMORY.zone_id.data = zone;
+}
+
+unsafe fn set_server_time(server_time: u64) {
+    SERVER_3.data = server_time
 }

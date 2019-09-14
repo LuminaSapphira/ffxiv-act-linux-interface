@@ -254,7 +254,7 @@ fn start_mem_sync_client(addr: String, thread_ctl: mpsc::Sender<ThreadControlMsg
                             break 'mem;
                         }
                         let seq = seq.unwrap();
-                        if last_seq > seq {
+                        if seq > last_seq {
                             last_seq = seq;
                             match buffer[0] {
                                 0x01 => handle_zone_packet(&mut cursor),

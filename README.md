@@ -1,6 +1,8 @@
 # ffxiv-act-linux-interface
 A program that allows players of FFXIV who use Wine to play on linux to be able to parse using ACT / FFXIV Plugin.
 
+*Project status*: On back burner during college semester.
+
 #### Background
 ACT and Wine don't really play along, especially because the FFXIV ACT plugin requires
 reading the memory of the FFXIV process and intercepting packets. This program allows
